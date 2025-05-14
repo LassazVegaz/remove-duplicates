@@ -23,7 +23,6 @@ def find_duplicates(
     stop_event: threading.Event,
 ) -> None:
     def worker() -> None:
-        # First pass: count all files
         all_files: List[str] = []
         for root, _, files in os.walk(folder):
             if stop_event.is_set():
@@ -83,7 +82,7 @@ class DuplicateFinderApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Duplicate File Finder")
-        self.root.geometry("800x750")
+        self.root.geometry("900x700")
 
         self.stop_event: Optional[threading.Event] = None
         self.result_widgets: List[tk.Widget] = []
@@ -96,33 +95,32 @@ class DuplicateFinderApp:
         tk.Label(control_frame, text="Select a folder to scan for duplicates:").pack(
             side="left", padx=5
         )
-
         tk.Button(control_frame, text="Select Folder", command=self.select_folder).pack(
             side="left", padx=5
         )
-
         self.btn_cancel = tk.Button(
             control_frame, text="Cancel Scan", command=self.cancel_scan
         )
         self.btn_cancel.pack(side="left", padx=5)
         self.btn_cancel.config(state=tk.DISABLED)
 
-        # Progress Bar
+        # Progress
         self.progress_label = tk.Label(root, text="", anchor="w")
         self.progress_label.pack(fill="x", padx=10)
-
         self.progress_bar = ttk.Progressbar(
             root, orient="horizontal", length=100, mode="determinate"
         )
         self.progress_bar.pack(fill="x", padx=10, pady=(0, 10))
 
-        # Logs Frame
-        self.log_canvas = Canvas(root, height=150)
-        self.log_scroll = Scrollbar(
-            root, orient="vertical", command=self.log_canvas.yview
+        # Logs
+        log_container = tk.Frame(root)
+        log_container.pack(fill="x", padx=10)
+        tk.Label(log_container, text="Logs:").pack(anchor="w")
+        self.log_canvas = Canvas(log_container, height=120)
+        self.log_scroll_y = Scrollbar(
+            log_container, orient="vertical", command=self.log_canvas.yview
         )
         self.log_frame = Frame(self.log_canvas)
-
         self.log_frame.bind(
             "<Configure>",
             lambda e: self.log_canvas.configure(
@@ -130,19 +128,22 @@ class DuplicateFinderApp:
             ),
         )
         self.log_canvas.create_window((0, 0), window=self.log_frame, anchor="nw")
-        self.log_canvas.configure(yscrollcommand=self.log_scroll.set)
+        self.log_canvas.configure(yscrollcommand=self.log_scroll_y.set)
+        self.log_canvas.pack(side="left", fill="x", expand=True)
+        self.log_scroll_y.pack(side="right", fill="y")
 
-        tk.Label(root, text="Logs:").pack(anchor="w", padx=10)
-        self.log_canvas.pack(fill="x", padx=10)
-        self.log_scroll.pack(fill="y", side="right", anchor="n", pady=(0, 500))
-
-        # Results Frame
-        self.result_canvas = Canvas(root)
-        self.result_scroll = Scrollbar(
-            root, orient="vertical", command=self.result_canvas.yview
+        # Results
+        result_container = tk.Frame(root)
+        result_container.pack(fill="both", expand=True, padx=10, pady=(10, 10))
+        tk.Label(result_container, text="Duplicate Files:").pack(anchor="w")
+        self.result_canvas = Canvas(result_container)
+        self.result_scroll_y = Scrollbar(
+            result_container, orient="vertical", command=self.result_canvas.yview
+        )
+        self.result_scroll_x = Scrollbar(
+            result_container, orient="horizontal", command=self.result_canvas.xview
         )
         self.result_frame = Frame(self.result_canvas)
-
         self.result_frame.bind(
             "<Configure>",
             lambda e: self.result_canvas.configure(
@@ -150,11 +151,20 @@ class DuplicateFinderApp:
             ),
         )
         self.result_canvas.create_window((0, 0), window=self.result_frame, anchor="nw")
-        self.result_canvas.configure(yscrollcommand=self.result_scroll.set)
+        self.result_canvas.configure(
+            yscrollcommand=self.result_scroll_y.set,
+            xscrollcommand=self.result_scroll_x.set,
+        )
+        self.result_canvas.pack(side="left", fill="both", expand=True)
+        self.result_scroll_y.pack(side="right", fill="y")
+        self.result_scroll_x.pack(side="bottom", fill="x")
 
-        tk.Label(root, text="Duplicate Files:").pack(anchor="w", padx=10, pady=(10, 0))
-        self.result_canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.result_scroll.pack(fill="y", side="right")
+        self.result_canvas.bind_all(
+            "<MouseWheel>",
+            lambda e: self.result_canvas.yview_scroll(
+                int(-1 * (e.delta / 120)), "units"
+            ),
+        )
 
     def select_folder(self) -> None:
         folder: str = filedialog.askdirectory()
@@ -185,7 +195,7 @@ class DuplicateFinderApp:
             fg="gray",
             anchor="w",
             justify="left",
-            wraplength=750,
+            wraplength=850,
         )
         label.pack(fill="x", anchor="w", pady=2, padx=5)
         self.log_widgets.append(label)
@@ -224,7 +234,6 @@ class DuplicateFinderApp:
             )
             group_label.pack(anchor="w", padx=5)
             self.result_widgets.append(group_label)
-
             for file in files:
                 self.create_file_buttons(file)
 
@@ -245,7 +254,7 @@ class DuplicateFinderApp:
         del_btn.pack(side="left")
 
         path_label = tk.Label(
-            btn_frame, text=filepath, anchor="w", justify="left", wraplength=650
+            btn_frame, text=filepath, anchor="w", justify="left", wraplength=700
         )
         path_label.pack(side="left", padx=10)
 
