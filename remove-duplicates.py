@@ -2,7 +2,7 @@ import os
 import hashlib
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox, Canvas, Frame, Scrollbar
 import webbrowser
 from typing import Callable, Dict, List, Optional
 
@@ -70,9 +70,10 @@ class DuplicateFinderApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Duplicate File Finder")
-        self.root.geometry("700x500")
+        self.root.geometry("800x600")
 
         self.stop_event: Optional[threading.Event] = None
+        self.result_widgets: List[tk.Widget] = []
 
         self.label = tk.Label(root, text="Select a folder to scan for duplicates:")
         self.label.pack(pady=10)
@@ -86,14 +87,26 @@ class DuplicateFinderApp:
         self.btn_cancel.pack()
         self.btn_cancel.config(state=tk.DISABLED)
 
-        self.output = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=80, height=20)
-        self.output.pack(pady=10)
+        # Scrollable result frame
+        self.canvas = Canvas(root, borderwidth=0)
+        self.scroll_y = Scrollbar(root, orient="vertical", command=self.canvas.yview)
+        self.frame = Frame(self.canvas)
+
+        self.frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+        self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scroll_y.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        self.scroll_y.pack(side="right", fill="y")
 
     def select_folder(self) -> None:
         folder: str = filedialog.askdirectory()
         if folder:
-            self.output.delete("1.0", tk.END)
-            self.output.insert(tk.END, f"Scanning folder: {folder}\n\n")
+            self.clear_results()
+            self.log(f"Scanning folder: {folder}")
             self.stop_event = threading.Event()
             self.btn_cancel.config(state=tk.NORMAL)
             find_duplicates(folder, self.log, self.display_results, self.stop_event)
@@ -104,8 +117,16 @@ class DuplicateFinderApp:
             self.btn_cancel.config(state=tk.DISABLED)
 
     def log(self, msg: str) -> None:
-        self.output.insert(tk.END, f"{msg}\n")
-        self.output.see(tk.END)
+        label = tk.Label(
+            self.frame, text=msg, fg="gray", anchor="w", justify="left", wraplength=750
+        )
+        label.pack(fill="x", anchor="w", pady=2, padx=5)
+        self.result_widgets.append(label)
+
+    def clear_results(self) -> None:
+        for widget in self.result_widgets:
+            widget.destroy()
+        self.result_widgets.clear()
 
     def display_results(self, duplicates: Dict[str, List[str]]) -> None:
         self.btn_cancel.config(state=tk.DISABLED)
@@ -116,29 +137,30 @@ class DuplicateFinderApp:
         for hash_val, files in duplicates.items():
             self.log(f"\nDuplicate Set - {hash_val[:10]}...")
             for file in files:
-                self.log(f"  {file}")
                 self.create_file_buttons(file)
 
     def create_file_buttons(self, filepath: str) -> None:
-        btn_frame: tk.Frame = tk.Frame(self.root)
-        btn_frame.pack(anchor="w", padx=30)
+        btn_frame = tk.Frame(self.frame)
+        btn_frame.pack(anchor="w", fill="x", padx=20, pady=2)
 
-        view_btn: tk.Button = tk.Button(
+        view_btn = tk.Button(
             btn_frame, text="View", command=lambda: self.view_file(filepath)
         )
         view_btn.pack(side="left")
 
-        del_btn: tk.Button = tk.Button(
+        del_btn = tk.Button(
             btn_frame,
             text="Delete",
             command=lambda: self.delete_file(filepath, btn_frame),
         )
         del_btn.pack(side="left")
 
-        path_label: tk.Label = tk.Label(
-            btn_frame, text=filepath, wraplength=600, anchor="w", justify="left"
+        path_label = tk.Label(
+            btn_frame, text=filepath, anchor="w", justify="left", wraplength=650
         )
-        path_label.pack(side="left", padx=5)
+        path_label.pack(side="left", padx=10)
+
+        self.result_widgets.append(btn_frame)
 
     def view_file(self, filepath: str) -> None:
         try:
@@ -147,7 +169,7 @@ class DuplicateFinderApp:
             messagebox.showerror("Error", f"Could not open file:\n{e}")
 
     def delete_file(self, filepath: str, widget: tk.Widget) -> None:
-        confirm: bool = messagebox.askyesno(
+        confirm = messagebox.askyesno(
             "Delete", f"Are you sure you want to delete:\n{filepath}"
         )
         if confirm:
@@ -160,6 +182,6 @@ class DuplicateFinderApp:
 
 
 if __name__ == "__main__":
-    root: tk.Tk = tk.Tk()
-    app: DuplicateFinderApp(root)
+    root = tk.Tk()
+    app = DuplicateFinderApp(root)
     root.mainloop()
