@@ -40,9 +40,7 @@ def find_duplicates(
                 except Exception as e:
                     output_callback(f"[Error] {filepath} - {e}")
 
-        potential_dupes: Dict[int, List[str]] = {
-            k: v for k, v in files_by_size.items() if len(v) > 1
-        }
+        potential_dupes = {k: v for k, v in files_by_size.items() if len(v) > 1}
         duplicates: Dict[str, List[str]] = {}
 
         for size, files in potential_dupes.items():
@@ -72,37 +70,71 @@ class DuplicateFinderApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Duplicate File Finder")
-        self.root.geometry("800x600")
+        self.root.geometry("800x700")
 
         self.stop_event: Optional[threading.Event] = None
         self.result_widgets: List[tk.Widget] = []
+        self.log_widgets: List[tk.Widget] = []
 
-        self.label = tk.Label(root, text="Select a folder to scan for duplicates:")
-        self.label.pack(pady=10)
+        # Controls
+        control_frame = tk.Frame(root)
+        control_frame.pack(pady=10)
 
-        self.btn_select = tk.Button(
-            root, text="Select Folder", command=self.select_folder
+        tk.Label(control_frame, text="Select a folder to scan for duplicates:").pack(
+            side="left", padx=5
         )
-        self.btn_select.pack()
 
-        self.btn_cancel = tk.Button(root, text="Cancel Scan", command=self.cancel_scan)
-        self.btn_cancel.pack()
+        tk.Button(control_frame, text="Select Folder", command=self.select_folder).pack(
+            side="left", padx=5
+        )
+
+        self.btn_cancel = tk.Button(
+            control_frame, text="Cancel Scan", command=self.cancel_scan
+        )
+        self.btn_cancel.pack(side="left", padx=5)
         self.btn_cancel.config(state=tk.DISABLED)
 
-        # Scrollable result frame
-        self.canvas = Canvas(root, borderwidth=0)
-        self.scroll_y = Scrollbar(root, orient="vertical", command=self.canvas.yview)
-        self.frame = Frame(self.canvas)
-
-        self.frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        # Logs Frame (top, smaller)
+        self.log_canvas = Canvas(root, height=150)
+        self.log_scroll = Scrollbar(
+            root, orient="vertical", command=self.log_canvas.yview
         )
-        self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scroll_y.set)
+        self.log_frame = Frame(self.log_canvas)
 
-        self.canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        self.scroll_y.pack(side="right", fill="y")
+        self.log_frame.bind(
+            "<Configure>",
+            lambda e: self.log_canvas.configure(
+                scrollregion=self.log_canvas.bbox("all")
+            ),
+        )
+        self.log_canvas.create_window((0, 0), window=self.log_frame, anchor="nw")
+        self.log_canvas.configure(yscrollcommand=self.log_scroll.set)
+
+        tk.Label(root, text="Logs:").pack(anchor="w", padx=10)
+        self.log_canvas.pack(fill="x", padx=10)
+        self.log_scroll.pack(
+            fill="y", side="right", anchor="n", pady=(0, 550)
+        )  # smart align
+
+        # Results Frame (bottom, larger)
+        self.result_canvas = Canvas(root)
+        self.result_scroll = Scrollbar(
+            root, orient="vertical", command=self.result_canvas.yview
+        )
+        self.result_frame = Frame(self.result_canvas)
+
+        self.result_frame.bind(
+            "<Configure>",
+            lambda e: self.result_canvas.configure(
+                scrollregion=self.result_canvas.bbox("all")
+            ),
+        )
+        self.result_canvas.create_window((0, 0), window=self.result_frame, anchor="nw")
+        self.result_canvas.configure(yscrollcommand=self.result_scroll.set)
+
+        tk.Label(root, text="Duplicate Files:").pack(anchor="w", padx=10, pady=(10, 0))
+        self.result_canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.result_scroll.pack(fill="y", side="right")
 
     def select_folder(self) -> None:
         folder: str = filedialog.askdirectory()
@@ -120,15 +152,24 @@ class DuplicateFinderApp:
 
     def log(self, msg: str) -> None:
         label = tk.Label(
-            self.frame, text=msg, fg="gray", anchor="w", justify="left", wraplength=750
+            self.log_frame,
+            text=msg,
+            fg="gray",
+            anchor="w",
+            justify="left",
+            wraplength=750,
         )
         label.pack(fill="x", anchor="w", pady=2, padx=5)
-        self.result_widgets.append(label)
+        self.log_widgets.append(label)
+        self.root.after(50, lambda: self.log_canvas.yview_moveto(1.0))  # auto scroll
 
     def clear_results(self) -> None:
         for widget in self.result_widgets:
             widget.destroy()
+        for widget in self.log_widgets:
+            widget.destroy()
         self.result_widgets.clear()
+        self.log_widgets.clear()
 
     def display_results(self, duplicates: Dict[str, List[str]]) -> None:
         self.btn_cancel.config(state=tk.DISABLED)
@@ -137,12 +178,19 @@ class DuplicateFinderApp:
             return
 
         for hash_val, files in duplicates.items():
-            self.log(f"\nDuplicate Set - {hash_val[:10]}...")
+            group_label = tk.Label(
+                self.result_frame,
+                text=f"\nDuplicate Set - {hash_val[:10]}...",
+                fg="blue",
+            )
+            group_label.pack(anchor="w", padx=5)
+            self.result_widgets.append(group_label)
+
             for file in files:
                 self.create_file_buttons(file)
 
     def create_file_buttons(self, filepath: str) -> None:
-        btn_frame = tk.Frame(self.frame)
+        btn_frame = tk.Frame(self.result_frame)
         btn_frame.pack(anchor="w", fill="x", padx=20, pady=2)
 
         view_btn = tk.Button(
@@ -163,6 +211,7 @@ class DuplicateFinderApp:
         path_label.pack(side="left", padx=10)
 
         self.result_widgets.append(btn_frame)
+        self.root.after(50, lambda: self.result_canvas.yview_moveto(1.0))  # auto scroll
 
     def view_file(self, filepath: str) -> None:
         try:
