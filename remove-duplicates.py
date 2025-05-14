@@ -2,7 +2,7 @@ import os
 import hashlib
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, Canvas, Frame, Scrollbar
+from tkinter import filedialog, messagebox, Canvas, Frame, Scrollbar, ttk
 import webbrowser
 from typing import Callable, Dict, List, Optional
 
@@ -19,31 +19,41 @@ def find_duplicates(
     folder: str,
     output_callback: Callable[[str], None],
     done_callback: Callable[[Dict[str, List[str]]], None],
+    update_progress: Callable[[int, int], None],
     stop_event: threading.Event,
 ) -> None:
     def worker() -> None:
-        files_by_size: Dict[int, List[str]] = {}
+        # First pass: count all files
+        all_files: List[str] = []
         for root, _, files in os.walk(folder):
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
                 return
             for name in files:
-                if stop_event.is_set():
-                    output_callback("[Cancelled] Scanning stopped.")
-                    return
                 filepath = os.path.join(root, name)
-                # logs the scanning folder
-                output_callback("[Scanning] " + filepath)
-                try:
-                    size = os.path.getsize(filepath)
-                    files_by_size.setdefault(size, []).append(filepath)
-                except Exception as e:
-                    output_callback(f"[Error] {filepath} - {e}")
+                all_files.append(filepath)
+
+        total_files = len(all_files)
+        scanned = 0
+        files_by_size: Dict[int, List[str]] = {}
+
+        for filepath in all_files:
+            if stop_event.is_set():
+                output_callback("[Cancelled] Scanning stopped.")
+                return
+            # logs the scanning file
+            output_callback("[Scanning] " + filepath)
+            try:
+                size = os.path.getsize(filepath)
+                files_by_size.setdefault(size, []).append(filepath)
+            except Exception as e:
+                output_callback(f"[Error] {filepath} - {e}")
+            scanned += 1
+            update_progress(scanned, total_files)
 
         potential_dupes = {k: v for k, v in files_by_size.items() if len(v) > 1}
         duplicates: Dict[str, List[str]] = {}
 
-        output_callback("[Calculating] finding duplicates from scanned ones")
         for size, files in potential_dupes.items():
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
@@ -61,6 +71,8 @@ def find_duplicates(
                         hashes[h] = file
                 except Exception as e:
                     output_callback(f"[Error] Hashing {file} - {e}")
+                scanned += 1
+                update_progress(scanned, total_files)
 
         done_callback(duplicates)
 
@@ -71,7 +83,7 @@ class DuplicateFinderApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Duplicate File Finder")
-        self.root.geometry("800x700")
+        self.root.geometry("800x750")
 
         self.stop_event: Optional[threading.Event] = None
         self.result_widgets: List[tk.Widget] = []
@@ -95,7 +107,16 @@ class DuplicateFinderApp:
         self.btn_cancel.pack(side="left", padx=5)
         self.btn_cancel.config(state=tk.DISABLED)
 
-        # Logs Frame (top, smaller)
+        # Progress Bar
+        self.progress_label = tk.Label(root, text="", anchor="w")
+        self.progress_label.pack(fill="x", padx=10)
+
+        self.progress_bar = ttk.Progressbar(
+            root, orient="horizontal", length=100, mode="determinate"
+        )
+        self.progress_bar.pack(fill="x", padx=10, pady=(0, 10))
+
+        # Logs Frame
         self.log_canvas = Canvas(root, height=150)
         self.log_scroll = Scrollbar(
             root, orient="vertical", command=self.log_canvas.yview
@@ -113,11 +134,9 @@ class DuplicateFinderApp:
 
         tk.Label(root, text="Logs:").pack(anchor="w", padx=10)
         self.log_canvas.pack(fill="x", padx=10)
-        self.log_scroll.pack(
-            fill="y", side="right", anchor="n", pady=(0, 550)
-        )  # smart align
+        self.log_scroll.pack(fill="y", side="right", anchor="n", pady=(0, 500))
 
-        # Results Frame (bottom, larger)
+        # Results Frame
         self.result_canvas = Canvas(root)
         self.result_scroll = Scrollbar(
             root, orient="vertical", command=self.result_canvas.yview
@@ -144,7 +163,15 @@ class DuplicateFinderApp:
             self.log(f"Scanning folder: {folder}")
             self.stop_event = threading.Event()
             self.btn_cancel.config(state=tk.NORMAL)
-            find_duplicates(folder, self.log, self.display_results, self.stop_event)
+            self.progress_bar["value"] = 0
+            self.progress_label.config(text="")
+            find_duplicates(
+                folder,
+                self.log,
+                self.display_results,
+                self.update_progress,
+                self.stop_event,
+            )
 
     def cancel_scan(self) -> None:
         if self.stop_event:
@@ -162,7 +189,7 @@ class DuplicateFinderApp:
         )
         label.pack(fill="x", anchor="w", pady=2, padx=5)
         self.log_widgets.append(label)
-        self.root.after(50, lambda: self.log_canvas.yview_moveto(1.0))  # auto scroll
+        self.root.after(50, lambda: self.log_canvas.yview_moveto(1.0))
 
     def clear_results(self) -> None:
         for widget in self.result_widgets:
@@ -172,8 +199,19 @@ class DuplicateFinderApp:
         self.result_widgets.clear()
         self.log_widgets.clear()
 
+    def update_progress(self, current: int, total: int) -> None:
+        progress_percent = int((current / total) * 100)
+        self.root.after(0, lambda: self.progress_bar.config(value=progress_percent))
+        self.root.after(
+            0,
+            lambda: self.progress_label.config(
+                text=f"Scanning file {current} of {total} ({progress_percent}%)"
+            ),
+        )
+
     def display_results(self, duplicates: Dict[str, List[str]]) -> None:
         self.btn_cancel.config(state=tk.DISABLED)
+        self.progress_label.config(text="Scan complete.")
         if not duplicates:
             self.log("No duplicate files found.")
             return
@@ -212,7 +250,7 @@ class DuplicateFinderApp:
         path_label.pack(side="left", padx=10)
 
         self.result_widgets.append(btn_frame)
-        self.root.after(50, lambda: self.result_canvas.yview_moveto(1.0))  # auto scroll
+        self.root.after(50, lambda: self.result_canvas.yview_moveto(1.0))
 
     def view_file(self, filepath: str) -> None:
         try:
