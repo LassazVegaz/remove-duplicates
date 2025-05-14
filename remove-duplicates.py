@@ -43,6 +43,7 @@ def find_duplicates(
         potential_dupes = {k: v for k, v in files_by_size.items() if len(v) > 1}
         duplicates: Dict[str, List[str]] = {}
 
+        output_callback("[Calculating] finding duplicates from scanned ones")
         for size, files in potential_dupes.items():
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
