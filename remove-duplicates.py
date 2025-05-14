@@ -32,6 +32,8 @@ def find_duplicates(
                     output_callback("[Cancelled] Scanning stopped.")
                     return
                 filepath = os.path.join(root, name)
+                # logs the scanning folder
+                output_callback("[Scanning] " + filepath)
                 try:
                     size = os.path.getsize(filepath)
                     files_by_size.setdefault(size, []).append(filepath)
