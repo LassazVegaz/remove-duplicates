@@ -1,81 +1,10 @@
 import os
-import hashlib
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, Canvas, Frame, Scrollbar, ttk
 import webbrowser
-from typing import Callable, Dict, List, Optional
-
-
-def hash_file(filepath: str, chunk_size: int = 8192) -> str:
-    hasher = hashlib.sha256()
-    with open(filepath, "rb") as f:
-        while chunk := f.read(chunk_size):
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
-def find_duplicates(
-    folder: str,
-    output_callback: Callable[[str], None],
-    done_callback: Callable[[Dict[str, List[str]]], None],
-    update_progress: Callable[[int, int], None],
-    stop_event: threading.Event,
-) -> None:
-    def worker() -> None:
-        all_files: List[str] = []
-        for root, _, files in os.walk(folder):
-            if stop_event.is_set():
-                output_callback("[Cancelled] Scanning stopped.")
-                return
-            for name in files:
-                filepath = os.path.join(root, name)
-                all_files.append(filepath)
-
-        total_files = len(all_files)
-        scanned = 0
-        files_by_size: Dict[int, List[str]] = {}
-
-        for filepath in all_files:
-            if stop_event.is_set():
-                output_callback("[Cancelled] Scanning stopped.")
-                return
-            # logs the scanning file
-            output_callback("[Scanning] " + filepath)
-            try:
-                size = os.path.getsize(filepath)
-                files_by_size.setdefault(size, []).append(filepath)
-            except Exception as e:
-                output_callback(f"[Error] {filepath} - {e}")
-            scanned += 1
-            update_progress(scanned, total_files)
-
-        potential_dupes = {k: v for k, v in files_by_size.items() if len(v) > 1}
-        duplicates: Dict[str, List[str]] = {}
-
-        for size, files in potential_dupes.items():
-            if stop_event.is_set():
-                output_callback("[Cancelled] Scanning stopped.")
-                return
-            hashes: Dict[str, str] = {}
-            for file in files:
-                if stop_event.is_set():
-                    output_callback("[Cancelled] Scanning stopped.")
-                    return
-                try:
-                    h = hash_file(file)
-                    if h in hashes:
-                        duplicates.setdefault(h, [hashes[h]]).append(file)
-                    else:
-                        hashes[h] = file
-                except Exception as e:
-                    output_callback(f"[Error] Hashing {file} - {e}")
-                scanned += 1
-                update_progress(scanned, total_files)
-
-        done_callback(duplicates)
-
-    threading.Thread(target=worker, daemon=True).start()
+from typing import Dict, List, Optional
+from duplicate_finder import find_duplicates
 
 
 class DuplicateFinderApp:
@@ -278,9 +207,3 @@ class DuplicateFinderApp:
                 widget.destroy()
             except Exception as e:
                 messagebox.showerror("Error", f"Could not delete file:\n{e}")
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = DuplicateFinderApp(root)
-    root.mainloop()
