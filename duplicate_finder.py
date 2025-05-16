@@ -12,11 +12,15 @@ def find_duplicates(
     stop_event: threading.Event,
 ) -> None:
     def worker() -> None:
+        output_callback("[Scanning] Getting total files count")
+
         all_files: List[str] = []
         for root, _, files in os.walk(folder):
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
                 return
+            output_callback(f"[Scanning] {root}")
+
             for name in files:
                 filepath = os.path.join(root, name)
                 all_files.append(filepath)
@@ -25,11 +29,15 @@ def find_duplicates(
         scanned = 0
         files_by_size: Dict[int, List[str]] = {}
 
+        output_callback(f"[Scanning] Found {total_files} files")
+        output_callback("[Scanning] Searching for duplicates")
+
         for filepath in all_files:
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
                 return
             output_callback("[Scanning] " + filepath)
+
             try:
                 size = os.path.getsize(filepath)
                 files_by_size.setdefault(size, []).append(filepath)
@@ -37,6 +45,9 @@ def find_duplicates(
                 output_callback(f"[Error] {filepath} - {e}")
             scanned += 1
             update_progress(scanned, total_files)
+
+        output_callback("[Scanning] Searching for duplicates done")
+        output_callback("[Scanning] Grouping duplicates")
 
         potential_dupes = {k: v for k, v in files_by_size.items() if len(v) > 1}
         duplicates: Dict[str, List[str]] = {}
