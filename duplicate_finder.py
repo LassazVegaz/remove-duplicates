@@ -74,4 +74,12 @@ def find_duplicates(
 
         done_callback(duplicates)
 
-    threading.Thread(target=worker, daemon=True).start()
+    def error_safe_worker() -> None:
+        try:
+            worker()
+        except Exception as e:
+            output_callback("[Error] An unexpected error occurred.")
+            output_callback(f"[Error] {e}")
+            done_callback({})
+
+    threading.Thread(target=error_safe_worker, daemon=True).start()
