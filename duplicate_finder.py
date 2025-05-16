@@ -46,21 +46,33 @@ def find_duplicates(
             scanned += 1
             update_progress(scanned, total_files)
 
+        size_groups = len(files_by_size)
         output_callback("[Scanning] Searching for duplicates done")
-        output_callback("[Scanning] Grouping duplicates")
+        output_callback("[Hashing] Hashing files to group duplicates")
+        output_callback(f"[Hashing] Groups of same size files found: {size_groups}")
 
         potential_dupes = {k: v for k, v in files_by_size.items() if len(v) > 1}
         duplicates: Dict[str, List[str]] = {}
+        groups_counter = 0
 
         for size, files in potential_dupes.items():
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
                 return
+            groups_counter += 1
+            output_callback(f"[Hashing] Size group: {groups_counter} of {size_groups}")
+            output_callback(f"[Hashing] Size group: {size} - {len(files)} files")
+
+            files_counter = 0
+            files_count = len(files)
             hashes: Dict[str, str] = {}
             for file in files:
                 if stop_event.is_set():
                     output_callback("[Cancelled] Scanning stopped.")
                     return
+                files_counter += 1
+                output_callback(f"[Hashing] {files_counter} of {files_count}")
+
                 try:
                     h = hash_file(file)
                     if h in hashes:
