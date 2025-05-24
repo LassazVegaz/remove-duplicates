@@ -1,5 +1,6 @@
 import os
 import threading
+import sqlite3
 from typing import Callable, Dict, List
 from hash_utils import hash_file
 
@@ -11,87 +12,171 @@ def find_duplicates(
     update_progress: Callable[[int, int], None],
     stop_event: threading.Event,
 ) -> None:
-    def worker() -> None:
-        output_callback("[Scanning] Getting total files count")
+    threading.Thread(
+        target=lambda: _run_find_duplicates(
+            folder, output_callback, done_callback, update_progress, stop_event
+        ),
+        daemon=True,
+    ).start()
 
-        all_files: List[str] = []
-        for root, _, files in os.walk(folder):
+
+def _run_find_duplicates(
+    folder: str,
+    output_callback: Callable[[str], None],
+    done_callback: Callable[[Dict[str, List[str]]], None],
+    update_progress: Callable[[int, int], None],
+    stop_event: threading.Event,
+) -> None:
+    try:
+        with sqlite3.connect(":memory:") as conn:
+            _setup_database(conn)
+            total_files = _scan_files(
+                folder, conn, output_callback, update_progress, stop_event
+            )
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
                 return
-            output_callback(f"[Scanning] {root}")
 
-            for name in files:
-                filepath = os.path.join(root, name)
-                all_files.append(filepath)
-
-        total_files = len(all_files)
-        scanned = 0
-        files_by_size: Dict[int, List[str]] = {}
-
-        output_callback(f"[Scanning] Found {total_files} files")
-        output_callback("[Scanning] Searching for duplicates")
-
-        for filepath in all_files:
+            _hash_files(conn, output_callback, update_progress, total_files, stop_event)
             if stop_event.is_set():
                 output_callback("[Cancelled] Scanning stopped.")
                 return
-            output_callback("[Scanning] " + filepath)
 
+            duplicates = _find_duplicates_from_db(conn)
+            done_callback(duplicates)
+
+    except Exception as e:
+        output_callback(f"[Error] Unexpected error: {e}")
+        done_callback({})
+
+
+def _setup_database(conn: sqlite3.Connection) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY,
+            path TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            hash TEXT
+        )
+    """
+    )
+    cursor.execute("CREATE INDEX idx_size ON files (size)")
+    cursor.execute("CREATE INDEX idx_hash ON files (hash)")
+    conn.commit()
+
+
+def _scan_files(
+    folder: str,
+    conn: sqlite3.Connection,
+    output_callback: Callable[[str], None],
+    update_progress: Callable[[int, int], None],
+    stop_event: threading.Event,
+) -> int:
+    output_callback("[Scanning] Collecting file list...")
+
+    all_files: List[str] = []
+    for root, _, files in os.walk(folder):
+        if stop_event.is_set():
+            return 0
+        for name in files:
+            filepath = os.path.join(root, name)
+            all_files.append(filepath)
+
+    total_files = len(all_files)
+    scanned = 0
+    cursor = conn.cursor()
+
+    for filepath in all_files:
+        if stop_event.is_set():
+            return scanned
+        try:
+            size = os.path.getsize(filepath)
+            cursor.execute(
+                "INSERT INTO files (path, size) VALUES (?, ?)", (filepath, size)
+            )
+        except Exception as e:
+            output_callback(f"[Error] {filepath} - {e}")
+        scanned += 1
+        if scanned % 100 == 0:
+            conn.commit()
+        update_progress(scanned, total_files)
+
+    conn.commit()
+    output_callback(f"[Scanning] Finished scanning {total_files} files.")
+    return total_files
+
+
+def _hash_files(
+    conn: sqlite3.Connection,
+    output_callback: Callable[[str], None],
+    update_progress: Callable[[int, int], None],
+    total_files: int,
+    stop_event: threading.Event,
+) -> None:
+    output_callback("[Hashing] Hashing files with duplicate sizes...")
+
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT size FROM files
+        GROUP BY size
+        HAVING COUNT(*) > 1
+    """
+    )
+    size_groups = cursor.fetchall()
+
+    group_index = 0
+    scanned = 0
+
+    for (size,) in size_groups:
+        if stop_event.is_set():
+            return
+
+        group_index += 1
+        output_callback(
+            f"[Hashing] Group {group_index} / {len(size_groups)} (size: {size})"
+        )
+
+        cursor.execute("SELECT path FROM files WHERE size = ?", (size,))
+        files = cursor.fetchall()
+
+        for i, (file_path,) in enumerate(files, start=1):
+            if stop_event.is_set():
+                return
+            output_callback(f"[Hashing] {i} / {len(files)} - {file_path}")
             try:
-                size = os.path.getsize(filepath)
-                files_by_size.setdefault(size, []).append(filepath)
+                file_hash = hash_file(file_path)
+                cursor.execute(
+                    "UPDATE files SET hash = ? WHERE path = ?", (file_hash, file_path)
+                )
             except Exception as e:
-                output_callback(f"[Error] {filepath} - {e}")
+                output_callback(f"[Error] Hashing {file_path} - {e}")
             scanned += 1
+            if scanned % 100 == 0:
+                conn.commit()
             update_progress(scanned, total_files)
 
-        size_groups = len(files_by_size)
-        output_callback("[Scanning] Searching for duplicates done")
-        output_callback("[Hashing] Hashing files to group duplicates")
-        output_callback(f"[Hashing] Groups of same size files found: {size_groups}")
+    conn.commit()
+    output_callback("[Hashing] Done hashing files.")
 
-        potential_dupes = {k: v for k, v in files_by_size.items() if len(v) > 1}
-        duplicates: Dict[str, List[str]] = {}
-        groups_counter = 0
 
-        for size, files in potential_dupes.items():
-            if stop_event.is_set():
-                output_callback("[Cancelled] Scanning stopped.")
-                return
-            groups_counter += 1
-            output_callback(f"[Hashing] Size group: {groups_counter} of {size_groups}")
-            output_callback(f"[Hashing] Size group: {size} - {len(files)} files")
+def _find_duplicates_from_db(conn: sqlite3.Connection) -> Dict[str, List[str]]:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT hash, GROUP_CONCAT(path)
+        FROM files
+        WHERE hash IS NOT NULL
+        GROUP BY hash
+        HAVING COUNT(*) > 1
+    """
+    )
+    result = cursor.fetchall()
 
-            files_counter = 0
-            files_count = len(files)
-            hashes: Dict[str, str] = {}
-            for file in files:
-                if stop_event.is_set():
-                    output_callback("[Cancelled] Scanning stopped.")
-                    return
-                files_counter += 1
-                output_callback(f"[Hashing] {files_counter} of {files_count}")
-
-                try:
-                    h = hash_file(file)
-                    if h in hashes:
-                        duplicates.setdefault(h, [hashes[h]]).append(file)
-                    else:
-                        hashes[h] = file
-                except Exception as e:
-                    output_callback(f"[Error] Hashing {file} - {e}")
-                scanned += 1
-                update_progress(scanned, total_files)
-
-        done_callback(duplicates)
-
-    def error_safe_worker() -> None:
-        try:
-            worker()
-        except Exception as e:
-            output_callback("[Error] An unexpected error occurred.")
-            output_callback(f"[Error] {e}")
-            done_callback({})
-
-    threading.Thread(target=error_safe_worker, daemon=True).start()
+    duplicates: Dict[str, List[str]] = {}
+    for file_hash, paths_str in result:
+        paths = paths_str.split(",")
+        duplicates[file_hash] = paths
+    return duplicates
