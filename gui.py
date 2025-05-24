@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox, Canvas, Frame, Scrollbar, ttk
 import webbrowser
 from typing import Dict, List, Optional
 from duplicate_finder import find_duplicates
+import datetime
 
 
 class DuplicateFinderApp:
@@ -95,6 +96,11 @@ class DuplicateFinderApp:
             ),
         )
 
+        self.log_file_path = "duplicate_finder.log"
+        # Make sure to create or clear the log file when the app starts
+        with open(self.log_file_path, "w", encoding="utf-8") as f:
+            f.write(f"[{datetime.datetime.now()}] Log started\n\n")
+
     def select_folder(self) -> None:
         folder: str = filedialog.askdirectory()
         if folder:
@@ -118,9 +124,16 @@ class DuplicateFinderApp:
             self.btn_cancel.config(state=tk.DISABLED)
 
     def log(self, msg: str) -> None:
+        # Format message with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        full_msg = f"[{timestamp}] {msg}"
+
+        print(full_msg)  # Print to console for debugging
+
+        # Log to GUI
         label = tk.Label(
             self.log_frame,
-            text=msg,
+            text=full_msg,
             fg="gray",
             anchor="w",
             justify="left",
@@ -129,6 +142,13 @@ class DuplicateFinderApp:
         label.pack(fill="x", anchor="w", pady=2, padx=5)
         self.log_widgets.append(label)
         self.root.after(50, lambda: self.log_canvas.yview_moveto(1.0))
+
+        # Log to file
+        try:
+            with open(self.log_file_path, "a", encoding="utf-8") as f:
+                f.write(full_msg + "\n")
+        except Exception as e:
+            print(f"Failed to write log to file: {e}")
 
     def clear_results(self) -> None:
         for widget in self.result_widgets:
